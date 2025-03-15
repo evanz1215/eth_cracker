@@ -14,7 +14,8 @@ use std::sync::{
 };
 use tokio::runtime::Runtime;
 
-const TOKEN_LIST: [&str; 10] = [
+const TOKEN_LIST: [&str; 11] = [
+    "ETH",                                        // ETH 餘額
     "0xdAC17F958D2ee523a2206206994597C13D831ec7", // USDT
     "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", // USDC
     "0x6B175474E89094C44Da98b954EedeAC495271d0F", // DAI
@@ -27,7 +28,6 @@ const TOKEN_LIST: [&str; 10] = [
     "0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE", // SHIBA
 ];
 
-// 計算已檢查的私鑰數量
 static CHECKED_KEYS: AtomicUsize = AtomicUsize::new(0);
 
 /// 生成隨機私鑰
@@ -44,21 +44,29 @@ fn private_key_to_address(private_key: &H256) -> Address {
     wallet.address()
 }
 
-/// 查詢 ERC20 代幣餘額
-async fn get_token_balance(client: &Provider<Http>, address: Address, token: Address) -> U256 {
-    let token_contract = Contract::new(token, abi(), Arc::new(client.clone()));
-    match token_contract
-        .method::<_, U256>("balanceOf", address)
-        .unwrap()
-        .call()
-        .await
-    {
-        Ok(balance) => balance,
-        Err(_) => U256::zero(),
+/// 查詢 ERC20 代幣餘額或 ETH 餘額
+async fn get_balance(client: &Provider<Http>, address: Address, token: &str) -> U256 {
+    if token == "ETH" {
+        match client.get_balance(address, None).await {
+            Ok(balance) => balance,
+            Err(_) => U256::zero(),
+        }
+    } else {
+        let token_address: Address = token.parse().unwrap();
+        let token_contract = Contract::new(token_address, abi(), Arc::new(client.clone()));
+        match token_contract
+            .method::<_, U256>("balanceOf", address)
+            .unwrap()
+            .call()
+            .await
+        {
+            Ok(balance) => balance,
+            Err(_) => U256::zero(),
+        }
     }
 }
 
-/// 獲取 ABI（ERC20 標準）
+/// 獲取 ERC20 代幣 ABI
 fn abi() -> Abi {
     serde_json::from_str(
         r#"[
@@ -74,7 +82,7 @@ fn abi() -> Abi {
     .unwrap()
 }
 
-/// 保存結果到文件並顯示在終端
+/// 保存結果
 fn save_to_file(address: Address, private_key: H256, token: &str, balance: U256) {
     let date = Local::now().format("%Y-%m-%d").to_string();
     let file_path = format!("results/{}.txt", date);
@@ -91,9 +99,7 @@ fn save_to_file(address: Address, private_key: H256, token: &str, balance: U256)
         address, private_key, token, balance
     );
 
-    // ✅ 在終端顯示結果
     println!("{}", line);
-
     file.write_all(line.as_bytes()).unwrap();
 }
 
@@ -104,38 +110,29 @@ fn main() {
     let rpc_url = format!("https://eth-mainnet.g.alchemy.com/v2/{}", api_key);
     let client = Arc::new(Provider::<Http>::try_from(rpc_url).unwrap());
 
-    // 建立 Tokio Runtime
     let rt = Runtime::new().unwrap();
     let handle = rt.handle();
 
-    // 多線程執行
     (0..10_000).into_par_iter().for_each(|_| {
         let private_key = generate_random_private_key();
         let address = private_key_to_address(&private_key);
         let client_clone = Arc::clone(&client);
-
-        // 取得當前私鑰的 HEX
         let private_key_hex = format!("0x{}", hex::encode(private_key.as_bytes()));
 
-        // 增加已檢查的私鑰計數
         let current_count = CHECKED_KEYS.fetch_add(1, Ordering::Relaxed);
 
-        // ✅ 每個私鑰都顯示目前的檢查進度
         println!(
             "🔎 檢查中: {} | 地址: {:?} | 私鑰: {}",
             current_count, address, private_key_hex
         );
 
-        // ✅ 每 1000 次顯示一次進度總結
         if current_count % 1000 == 0 {
             println!("🚀 進度: 已檢查 {} 個私鑰...", current_count);
         }
 
-        // 使用 `handle.block_on()` 在同步函數內執行異步
         handle.block_on(async move {
             for &token in &TOKEN_LIST {
-                let balance =
-                    get_token_balance(&client_clone, address, token.parse().unwrap()).await;
+                let balance = get_balance(&client_clone, address, token).await;
                 if balance > U256::zero() {
                     save_to_file(address, private_key, token, balance);
                 }
