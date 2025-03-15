@@ -1,17 +1,14 @@
 use chrono::Local;
 use dotenv::dotenv;
 use ethers::abi::Abi;
-use ethers::{prelude::*, utils::hex};
+use ethers::prelude::*;
 use rand::Rng;
 use rayon::prelude::*;
 use serde_json;
 use std::env;
 use std::fs::{OpenOptions, create_dir_all};
 use std::io::Write;
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
-};
+use std::sync::Arc;
 use tokio::runtime::Runtime;
 
 const TOKEN_LIST: [&str; 10] = [
@@ -26,9 +23,6 @@ const TOKEN_LIST: [&str; 10] = [
     "0x4fabb145d64652a948d72533023f6e7a623c7c53", // BUSD
     "0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE", // SHIBA
 ];
-
-// 計算已檢查的私鑰數量
-static CHECKED_KEYS: AtomicUsize = AtomicUsize::new(0);
 
 /// 生成隨機私鑰
 fn generate_random_private_key() -> H256 {
@@ -74,7 +68,7 @@ fn abi() -> Abi {
     .unwrap()
 }
 
-/// 保存結果到文件並顯示在終端
+/// 保存結果到文件
 fn save_to_file(address: Address, private_key: H256, token: &str, balance: U256) {
     let date = Local::now().format("%Y-%m-%d").to_string();
     let file_path = format!("results/{}.txt", date);
@@ -87,13 +81,9 @@ fn save_to_file(address: Address, private_key: H256, token: &str, balance: U256)
         .unwrap();
 
     let line = format!(
-        "\n✅ 找到餘額! \n地址: {:?}\n私鑰: {:?}\n代幣: {}\n餘額: {}\n",
+        "Address: {:?}, Private Key: {:?}, Token: {}, Balance: {}\n",
         address, private_key, token, balance
     );
-
-    // ✅ 在終端顯示結果
-    println!("{}", line);
-
     file.write_all(line.as_bytes()).unwrap();
 }
 
@@ -114,23 +104,6 @@ fn main() {
         let address = private_key_to_address(&private_key);
         let client_clone = Arc::clone(&client);
 
-        // 取得當前私鑰的 HEX
-        let private_key_hex = format!("0x{}", hex::encode(private_key.as_bytes()));
-
-        // 增加已檢查的私鑰計數
-        let current_count = CHECKED_KEYS.fetch_add(1, Ordering::Relaxed);
-
-        // ✅ 每個私鑰都顯示目前的檢查進度
-        println!(
-            "🔎 檢查中: {} | 地址: {:?} | 私鑰: {}",
-            current_count, address, private_key_hex
-        );
-
-        // ✅ 每 1000 次顯示一次進度總結
-        if current_count % 1000 == 0 {
-            println!("🚀 進度: 已檢查 {} 個私鑰...", current_count);
-        }
-
         // 使用 `handle.block_on()` 在同步函數內執行異步
         handle.block_on(async move {
             for &token in &TOKEN_LIST {
@@ -142,9 +115,4 @@ fn main() {
             }
         });
     });
-
-    println!(
-        "✅ 任務完成！共檢查 {} 個私鑰",
-        CHECKED_KEYS.load(Ordering::Relaxed)
-    );
 }
